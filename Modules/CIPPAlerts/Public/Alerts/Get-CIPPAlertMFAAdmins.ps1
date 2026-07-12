@@ -18,7 +18,20 @@ function Get-CIPPAlertMFAAdmins {
             }
         }
         if (!$DuoActive) {
-            $MFAReport = try { Get-CIPPMFAStateReport -TenantFilter $TenantFilter | Where-Object { $_.DisplayName -ne 'On-Premises Directory Synchronization Service Account' } } catch { $null }
+            # Avoid logging an expected reporting-database error when a newly enabled
+            # partner tenant has not populated its MFA cache yet. The alert already
+            # has a live Graph fallback for this condition.
+            $MFAStateCache = try { New-CIPPDbRequest -TenantFilter $TenantFilter -Type 'MFAState' } catch { $null }
+            $MFAReport = if ($MFAStateCache) {
+                try {
+                    Get-CIPPMFAStateReport -TenantFilter $TenantFilter |
+                        Where-Object { $_.DisplayName -ne 'On-Premises Directory Synchronization Service Account' }
+                } catch {
+                    $null
+                }
+            } else {
+                $null
+            }
             $IncludeDisabled = [System.Convert]::ToBoolean($InputValue)
 
             # Check 1: Admins with no MFA registered — prefer cache, fall back to live Graph
