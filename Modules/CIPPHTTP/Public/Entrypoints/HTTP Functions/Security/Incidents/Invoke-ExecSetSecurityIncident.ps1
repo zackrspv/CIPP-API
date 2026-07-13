@@ -23,9 +23,21 @@ function Invoke-ExecSetSecurityIncident {
     $Comment = $Request.Body.Comment
     $Redirected = $Request.Body.Redirected -as [int]
 
+    $Assigned = $null
+    $AssigneeValidationError = $null
     $AssignToSelf = [System.Convert]::ToBoolean($Request.Body.AssignToSelf)
-    # Assign-to-self resolves to the caller; other actions omit the assignee so it's preserved.
-    if ($AssignToSelf -eq $true) {
+    $ExplicitAssignee = [string]$Request.Body.AssignedTo
+    # App-only automation has no interactive userDetails claim. An explicitly named assignee is
+    # accepted because this endpoint is already protected by Security.Incident.ReadWrite.
+    if (-not [string]::IsNullOrWhiteSpace($ExplicitAssignee)) {
+        $ExplicitAssignee = $ExplicitAssignee.Trim()
+        if ($ExplicitAssignee.Length -gt 320 -or $ExplicitAssignee -notmatch '^[^@\s]+@[^@\s]+$') {
+            $AssigneeValidationError = 'AssignedTo must be a valid operator email address.'
+        } else {
+            $Assigned = $ExplicitAssignee
+        }
+    } elseif ($AssignToSelf -eq $true) {
+        # Interactive CIPP requests continue to resolve the assignee from the caller.
         $Assigned = ([System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($Headers.'x-ms-client-principal')) | ConvertFrom-Json).userDetails
     }
 
@@ -34,6 +46,10 @@ function Invoke-ExecSetSecurityIncident {
     $BodyParts = [System.Collections.Generic.List[string]]::new()
 
     try {
+        if ($null -ne $AssigneeValidationError) {
+            throw $AssigneeValidationError
+        }
+
         # We won't update redirected incidents because the incident it is redirected to should instead be updated
         if ($Redirected -lt 1) {
             # Set received status
@@ -72,6 +88,10 @@ function Invoke-ExecSetSecurityIncident {
                 if ($null -eq $Status) {
                     $BodyParts.Add("assigned to $Assigned")
                 }
+            }
+
+            if ($BodyObject.Count -eq 0) {
+                throw 'No supported incident updates were supplied.'
             }
 
             $AssignBody = ConvertTo-Json -InputObject $BodyObject -Compress
