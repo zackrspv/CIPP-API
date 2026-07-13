@@ -68,6 +68,60 @@ Describe 'Invoke-ExecSetSecurityIncident' {
         ($lastPatch.Body | ConvertFrom-Json).assignedTo | Should -Be 'caller@contoso.com'
     }
 
+    It 'assigns to an explicit operator for app-only automation' {
+        $request = [pscustomobject]@{
+            Params = @{ CIPPEndpoint = 'ExecSetSecurityIncident' }
+            Headers = @{}
+            Body    = [pscustomobject]@{
+                tenantFilter = 'contoso.onmicrosoft.com'
+                GUID         = 'incident-1'
+                AssignedTo   = 'operator@contoso.com'
+            }
+        }
+
+        $response = Invoke-ExecSetSecurityIncident -Request $request -TriggerMetadata $null
+
+        $response.StatusCode | Should -Be ([System.Net.HttpStatusCode]::OK)
+        ($lastPatch.Body | ConvertFrom-Json).assignedTo | Should -Be 'operator@contoso.com'
+        $response.Body.Results | Should -Match 'assigned to operator@contoso.com'
+    }
+
+    It 'rejects an empty app-only assign-to-self request instead of reporting false success' {
+        $request = [pscustomobject]@{
+            Params = @{ CIPPEndpoint = 'ExecSetSecurityIncident' }
+            Headers = @{}
+            Body    = [pscustomobject]@{
+                tenantFilter = 'contoso.onmicrosoft.com'
+                GUID         = 'incident-1'
+                AssignToSelf = $false
+            }
+        }
+
+        $response = Invoke-ExecSetSecurityIncident -Request $request -TriggerMetadata $null
+
+        $response.StatusCode | Should -Be ([System.Net.HttpStatusCode]::InternalServerError)
+        $response.Body.Results | Should -Match 'No supported incident updates were supplied'
+        $lastPatch | Should -BeNullOrEmpty
+    }
+
+    It 'rejects an invalid explicit assignee' {
+        $request = [pscustomobject]@{
+            Params = @{ CIPPEndpoint = 'ExecSetSecurityIncident' }
+            Headers = @{}
+            Body    = [pscustomobject]@{
+                tenantFilter = 'contoso.onmicrosoft.com'
+                GUID         = 'incident-1'
+                AssignedTo   = 'not-an-email-address'
+            }
+        }
+
+        $response = Invoke-ExecSetSecurityIncident -Request $request -TriggerMetadata $null
+
+        $response.StatusCode | Should -Be ([System.Net.HttpStatusCode]::InternalServerError)
+        $response.Body.Results | Should -Match 'valid operator email address'
+        $lastPatch | Should -BeNullOrEmpty
+    }
+
     It 'sends status resolved together with the resolving comment' {
         $request = [pscustomobject]@{
             Params = @{ CIPPEndpoint = 'ExecSetSecurityIncident' }
